@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <stack>
 #include <queue>
+#include <fstream>
 
 using namespace sdsl;
 using namespace std;
@@ -266,6 +267,23 @@ private:
 
 };
 
+class mh_128{
+	public:
+		__uint128_t kmer;
+		int file_count;
+		mh_128(__uint128_t kmer, int file_count): kmer(kmer), file_count(file_count){}
+		
+};
+bool operator<(const mh_128& mh1, const mh_128& mh2){
+			return mh1.kmer < mh2.kmer;
+		}
+
+class compare_kmer{
+	public:
+		int operator()(const mh_128& mh1, const mh_128& mh2){
+			return mh1.kmer > mh2.kmer;
+		}
+};
 template<class dbg_type>
 class comp_edge{
 
@@ -402,13 +420,13 @@ public:
 
 		uint64_t pre_allocation = 0;
 		uint64_t tot_bases = 0;
+		int max_line_size = 0;
 
 		{
 			//count how many kmers we will generate (one per base)
 
 			ifstream file(filename);
 			int read_lines=0;
-
 			string str;
 			while (std::getline(file, str) and (nlines == 0 or read_lines < nlines)) { //getline reads header
 
@@ -416,6 +434,7 @@ public:
 
 				pre_allocation += str.length()+1;
 				tot_bases += str.length();
+				if (str.length() + 1 > max_line_size){max_line_size = str.length() +1;}
 
 				if(format == fastq){
 					getline(file, str);//getline reads +
@@ -439,14 +458,16 @@ public:
 		}
 
 		int read_lines=0;
-
+		int max_lines_read = 200000;
+		int file_count = 0;
 		/*
 		 *  vector storing all (k+1)-mers (i.e. edges) using 3 bits per char
 		 *  format example: if k=3 and we have a kmer ACG followed by T, then we store an integer rev(ACG)T = GCAT
 		 *
 		 */
 		vector<__uint128_t> kmers;
-		kmers.reserve(pre_allocation);
+		vector<__uint128_t> kmers2;
+		kmers.reserve(max_lines_read*max_line_size);
 
 		if(verbose)
 			cout << "Extracting k-mers from dataset ..." << endl;
@@ -487,21 +508,118 @@ public:
 
 			read_lines++;
 
-			if(read_lines%1000000==0 and verbose)
-				cout << "read " << read_lines << " sequences" << endl;
+			if(read_lines%max_lines_read==0){
+				sort(kmers.begin(),kmers.end());
+				string outfile_name = filename + to_string(file_count) +".sort" ;
+				cout << "k-mers part " << file_count + 1 << " written to " << outfile_name<< endl;
+				file_count++;
+				std::ofstream outfile;
+				outfile.open(outfile_name);
+				__uint64_t kmf;
+				string km;
+				for(int i=0; i< kmers.size();i++)
+				{
+					kmer = kmers[i];
+					
+					kmf = ((__uint64_t) kmer);
+					outfile << kmf << endl;
+					kmf = ((__uint64_t) (kmer>>64));
+					outfile << kmf << endl;
+					if(i%100000 == 0 && verbose){cout << i << "lines are written" <<endl;}
+				}
+				outfile.close();
+				kmers.clear();
+				if(verbose)
+					cout << "read " << read_lines << " sequences" << endl;
+			}
 
 		}
 
-		if(verbose)
-			cout << "Sorting k-mers ..." << endl;
+		if(kmers.size() > 0){
+			sort(kmers.begin(),kmers.end());
+			string outfile_name = filename + to_string(file_count) +".sort" ;
+			cout << "k-mers part " << file_count + 1 << " written to " << outfile_name<< endl;
+			file_count++;
+			std::ofstream outfile;
+			outfile.open(outfile_name);
+			__uint64_t kmf;
+			string km;
+			__uint128_t kmer;
+			for(int i=0; i< kmers.size();i++)
+			{
+				kmer = kmers[i];
+				kmf = ((__uint64_t) kmer);
+				outfile << kmf << endl;
+				
+				kmf = ((__uint64_t) (kmer>>64));
+				outfile << kmf << endl;
+			}
+			outfile.close();
+			kmers.clear();
+			if(verbose)
+				cout << "read " << read_lines << " sequences vestige" << endl;
+		}
+		cout << "file count is " << file_count << endl;
+		priority_queue<mh_128, vector<mh_128>, compare_kmer> pq, pq2;
+		__uint64_t kmf, kmf2;
+		__uint128_t kmer2, kmer;
+		std::ifstream infile[file_count];
+		for(int i = 0;i < file_count;i++){
+			string infile_name = filename + to_string(i) +".sort";
+			infile[i].open(infile_name);
+			infile[i] >> kmf;
+			infile[i] >> kmf2;
+			kmer2 = (((__uint128_t)kmf2)<<64)|((__uint128_t)kmf);
+			pq.push(mh_128(kmer2, i));
+		}
+		std::ofstream outfile;
+		string outfile_name = filename + ".sorted";
+		outfile.open(outfile_name);
+		while(!pq.empty()){
+			kmer = pq.top().kmer;
+			file_count = pq.top().file_count;
+			// cout << "popped from pq " << kmer_to_str(kmer3, k) << endl;
+			// cout << (__uint64_t)pq.top().kmer << pq.top().file_count <<endl;
+			pq.pop();
+			
+			if(infile[file_count].peek()!= EOF){
+				infile[file_count] >> kmf;
+				if(infile[file_count].peek()!= EOF){
+					infile[file_count] >> kmf2;
+					kmer2 = (((__uint128_t)kmf2)<<64)|((__uint128_t)kmf);
+					// cout << "pushed here from file " << file_count << " " << kmer_to_str(kmer2, k)<<endl;
+					pq.push(mh_128(kmer2, file_count));
+				}
+			}
+			kmf = ((__uint64_t) kmer);
+			outfile << kmf << endl;
+			kmf = ((__uint64_t) (kmer>>64));
+			outfile << kmf << endl;
+		}
+		outfile.close();
+		for(int i = 0;i < file_count;i++){
+			infile[i].close();
+		}
+		if (verbose){
+			cout << "sorted the kmers file" << endl;
+		}
 
-		sort(kmers.begin(),kmers.end());
+		//-------------- Check sort order -----------
+		std::ifstream outfile2;
+		outfile2.open(outfile_name);
+		if(outfile2.peek() != EOF){
+			outfile2 >> kmf;
+			if(outfile2.peek()!=EOF){
+				outfile2 >> kmf2;
+				kmer = (((__uint128_t)kmf2)<<64)|((__uint128_t)kmf);
+			}
+		}
 
 		if(verbose)
 			cout << "Computing in/out-degrees, edge labels, and weights ..." << endl;
 
 		//previous kmer read from kmers.
-		__uint128_t prev_kmer = kmers[0];
+		__uint128_t prev_kmer = kmer;
 
 		start_positions_out_.push_back(0);
 		out_labels_.push_back(toCHAR(kmers[0] & __uint128_t(7)));
@@ -509,11 +627,16 @@ public:
 		assert(c=='$' or c=='A' or c=='C' or c=='G' or c=='T');
 
 		uint32_t count = 1;
-
-		for(uint64_t i = 1; i<kmers.size();++i){
-
+		bool flag = true;
+		while(flag){
+			if(outfile2.peek() != EOF){
+				outfile2 >> kmf;
+				if(outfile2.peek()!=EOF){
+					outfile2 >> kmf2;
+					kmer = (((__uint128_t)kmf2)<<64)|((__uint128_t)kmf);
+					
 			//if kmer changes
-			if((kmers[i]>>3) != (prev_kmer>>3)){
+			if((kmer>>3) != (prev_kmer>>3)){
 
 				//we set to 0 the counters of kmers that contain $
 				count = has_dollars(prev_kmer)?0:count;
@@ -529,7 +652,7 @@ public:
 				count = 1; //start counting weight of this new kmer
 
 				start_positions_out_.push_back(out_labels_.size());
-				out_labels_.push_back(toCHAR(kmers[i] & __uint128_t(7)));//append to BWT first outgoing edge of this new kmer
+				out_labels_.push_back(toCHAR(kmer & __uint128_t(7)));//append to BWT first outgoing edge of this new kmer
 				char c = out_labels_[out_labels_.size()-1];
 				assert(c=='$' or c=='A' or c=='C' or c=='G' or c=='T');
 
@@ -537,7 +660,7 @@ public:
 
 				count++;
 
-				uint8_t curr_char = kmers[i] & __uint128_t(7);
+				uint8_t curr_char = kmer & __uint128_t(7);
 				uint8_t prev_char = prev_kmer & __uint128_t(7);
 
 				//if char of outgoing edge has changed
@@ -551,9 +674,16 @@ public:
 
 			}
 
-			prev_kmer = kmers[i];
+			prev_kmer = kmer;
+			}
+				else{flag = false;}
+				}
+			else{
+				flag = false;
+			}
 
 		}
+		outfile2.close();
 
 		if(not has_dollars(prev_kmer)){
 			MAX_WEIGHT = count>MAX_WEIGHT?count:MAX_WEIGHT;
@@ -569,18 +699,61 @@ public:
 		OUT_ = vector<uint64_t>(out_labels_.size());
 
 		//delete char labeling outgoing edge from each (k+1)-mer, obtaining the k-mers
-		for(auto & k : kmers)
-			k = k>>3;
+		//and compact kmers by removing duplicates
+		
+		if(verbose)
+			cout << "Resizing k-mers ..." << endl;
 
-		//if(verbose)
-			//cout << "Resizing k-mers ..." << endl;
+		outfile2.open(outfile_name);
+		flag = true;
+		if(outfile2.peek() != EOF){
+				outfile2 >> kmf;
+				if(outfile2.peek()!=EOF){
+					outfile2 >> kmf2;
+					prev_kmer = (((__uint128_t)kmf2)<<64)|((__uint128_t)kmf);
+					}
+				else{flag = false;}
+				}
+			else{
+				flag = false;
+			}
+		prev_kmer = prev_kmer>>3;
+		kmers.clear();
+		kmers.push_back(prev_kmer);
+		int new_size = 1;
+		while(flag){
+			if(outfile2.peek() != EOF){
+				outfile2 >> kmf;
+				if(outfile2.peek()!=EOF){
+					outfile2 >> kmf2;
+					kmer = (((__uint128_t)kmf2)<<64)|((__uint128_t)kmf);
+					kmer = kmer>>3;
+					if(prev_kmer != kmer){
+						kmers.push_back(kmer);
+						new_size++;
+						// cout << "kmers " << (uint64_t) kmer <<" "<< (uint64_t) prev_kmer <<" " << new_size<< endl;
+						prev_kmer = kmer;
+					}
+					}
+				else{flag = false;}
+				}
+			else{
+				flag = false;
+			}
+			
+		}
+			// k = k>>3;
 
-		//compact kmers by removing duplicates
-		auto it = unique(kmers.begin(), kmers.end());
-		auto new_size = distance(kmers.begin(), it);
+		// auto it = unique(kmers.begin(), kmers.end());
+		// auto new_size = distance(kmers.begin(), it);//distance to the end of unique element
+		// cout << "new size "<< new_size <<endl;
 		kmers.resize(new_size);
 		kmers.shrink_to_fit();
 
+		// read to memory and leave the remaining as it is.......
+		
+		if(verbose)
+			cout << "Resized k-mer size ..." << new_size << endl;
 		assert(kmers.size() == nr_of_nodes);
 
 		start_positions_in_ = vector<uint64_t>(nr_of_nodes,0);
@@ -603,7 +776,7 @@ public:
 
 					//cout << "----" << kmer_to_str_(kmers[i],k) << " " << c << " " << kmer_to_str_(succ_kmer,k)  << endl;
 
-					auto it = lower_bound(kmers.begin(), kmers.end(), succ_kmer);
+					auto it = lower_bound(kmers.begin(), kmers.end(), succ_kmer);//binary search on the array
 
 					assert(it != kmers.end());//destination kmer must be present
 
