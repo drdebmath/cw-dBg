@@ -21,7 +21,12 @@
 #include <algorithm>
 #include <stack>
 #include <queue>
-#include <fstream>
+#include <stxxl.h>
+#include <stxxl/vector>
+// #include <stxxl/sorter>
+// #include <stxxl/stats>
+// #include <stxxl/timer>
+#include <limits>
 
 using namespace sdsl;
 using namespace std;
@@ -267,23 +272,6 @@ private:
 
 };
 
-class mh_128{
-	public:
-		__uint128_t kmer;
-		int file_count;
-		mh_128(__uint128_t kmer, int file_count): kmer(kmer), file_count(file_count){}
-		
-};
-bool operator<(const mh_128& mh1, const mh_128& mh2){
-			return mh1.kmer < mh2.kmer;
-		}
-
-class compare_kmer{
-	public:
-		int operator()(const mh_128& mh1, const mh_128& mh2){
-			return mh1.kmer > mh2.kmer;
-		}
-};
 template<class dbg_type>
 class comp_edge{
 
@@ -353,6 +341,22 @@ string kmer_to_str(__uint128_t kmer, int k){
 
 }
 
+struct SortKmer
+{
+ // comparison function
+ bool operator () (const __uint128_t& a, const __uint128_t& b) const
+ {
+ return a< b;
+ }
+ __uint128_t min_value() const
+ {
+ return std::numeric_limits<__uint128_t>::min();
+ }
+ __uint128_t max_value() const
+ {
+ return std::numeric_limits<__uint128_t>::max();
+ }
+};
 //has $ symbols in the kmer part?
 bool has_dollars(__uint128_t kmer){
 
@@ -411,6 +415,7 @@ public:
 			uint16_t srate = 64,
 			bool XBWT = true,
 			bool do_not_optimize = false,
+			bool D = false,
 			bool verbose = true) : k(k), srate(srate), XBWT(XBWT){
 
 		assert(k>0 and k<=41);
@@ -420,13 +425,13 @@ public:
 
 		uint64_t pre_allocation = 0;
 		uint64_t tot_bases = 0;
-		int max_line_size = 0;
 
 		{
 			//count how many kmers we will generate (one per base)
 
 			ifstream file(filename);
 			int read_lines=0;
+
 			string str;
 			while (std::getline(file, str) and (nlines == 0 or read_lines < nlines)) { //getline reads header
 
@@ -434,7 +439,6 @@ public:
 
 				pre_allocation += str.length()+1;
 				tot_bases += str.length();
-				if (str.length() + 1 > max_line_size){max_line_size = str.length() +1;}
 
 				if(format == fastq){
 					getline(file, str);//getline reads +
@@ -458,16 +462,14 @@ public:
 		}
 
 		int read_lines=0;
-		int max_lines_read = 200000;
-		int file_count = 0;
+
 		/*
 		 *  vector storing all (k+1)-mers (i.e. edges) using 3 bits per char
 		 *  format example: if k=3 and we have a kmer ACG followed by T, then we store an integer rev(ACG)T = GCAT
 		 *
 		 */
-		vector<__uint128_t> kmers;
-		vector<__uint128_t> kmers2;
-		kmers.reserve(max_lines_read*max_line_size);
+		stxxl::vector<__uint128_t> kmers;
+		kmers.reserve(pre_allocation);
 
 		if(verbose)
 			cout << "Extracting k-mers from dataset ..." << endl;
@@ -508,118 +510,23 @@ public:
 
 			read_lines++;
 
-			if(read_lines%max_lines_read==0){
-				sort(kmers.begin(),kmers.end());
-				string outfile_name = filename + to_string(file_count) +".sort" ;
-				cout << "k-mers part " << file_count + 1 << " written to " << outfile_name<< endl;
-				file_count++;
-				std::ofstream outfile;
-				outfile.open(outfile_name);
-				__uint64_t kmf;
-				string km;
-				for(int i=0; i< kmers.size();i++)
-				{
-					kmer = kmers[i];
-					
-					kmf = ((__uint64_t) kmer);
-					outfile << kmf << endl;
-					kmf = ((__uint64_t) (kmer>>64));
-					outfile << kmf << endl;
-					if(i%100000 == 0 && verbose){cout << i << "lines are written" <<endl;}
-				}
-				outfile.close();
-				kmers.clear();
-				if(verbose)
-					cout << "read " << read_lines << " sequences" << endl;
-			}
+			if(read_lines%1000000==0 and verbose)
+				cout << "read " << read_lines << " sequences" << endl;
 
 		}
 
-		if(kmers.size() > 0){
-			sort(kmers.begin(),kmers.end());
-			string outfile_name = filename + to_string(file_count) +".sort" ;
-			cout << "k-mers part " << file_count + 1 << " written to " << outfile_name<< endl;
-			file_count++;
-			std::ofstream outfile;
-			outfile.open(outfile_name);
-			__uint64_t kmf;
-			string km;
-			__uint128_t kmer;
-			for(int i=0; i< kmers.size();i++)
-			{
-				kmer = kmers[i];
-				kmf = ((__uint64_t) kmer);
-				outfile << kmf << endl;
-				
-				kmf = ((__uint64_t) (kmer>>64));
-				outfile << kmf << endl;
-			}
-			outfile.close();
-			kmers.clear();
-			if(verbose)
-				cout << "read " << read_lines << " sequences vestige" << endl;
-		}
-		cout << "file count is " << file_count << endl;
-		priority_queue<mh_128, vector<mh_128>, compare_kmer> pq, pq2;
-		__uint64_t kmf, kmf2;
-		__uint128_t kmer2, kmer;
-		std::ifstream infile[file_count];
-		for(int i = 0;i < file_count;i++){
-			string infile_name = filename + to_string(i) +".sort";
-			infile[i].open(infile_name);
-			infile[i] >> kmf;
-			infile[i] >> kmf2;
-			kmer2 = (((__uint128_t)kmf2)<<64)|((__uint128_t)kmf);
-			pq.push(mh_128(kmer2, i));
-		}
-		std::ofstream outfile;
-		string outfile_name = filename + ".sorted";
-		outfile.open(outfile_name);
-		while(!pq.empty()){
-			kmer = pq.top().kmer;
-			file_count = pq.top().file_count;
-			// cout << "popped from pq " << kmer_to_str(kmer3, k) << endl;
-			// cout << (__uint64_t)pq.top().kmer << pq.top().file_count <<endl;
-			pq.pop();
-			
-			if(infile[file_count].peek()!= EOF){
-				infile[file_count] >> kmf;
-				if(infile[file_count].peek()!= EOF){
-					infile[file_count] >> kmf2;
-					kmer2 = (((__uint128_t)kmf2)<<64)|((__uint128_t)kmf);
-					// cout << "pushed here from file " << file_count << " " << kmer_to_str(kmer2, k)<<endl;
-					pq.push(mh_128(kmer2, file_count));
-				}
-			}
-			kmf = ((__uint64_t) kmer);
-			outfile << kmf << endl;
-			kmf = ((__uint64_t) (kmer>>64));
-			outfile << kmf << endl;
-		}
-		outfile.close();
-		for(int i = 0;i < file_count;i++){
-			infile[i].close();
-		}
-		if (verbose){
-			cout << "sorted the kmers file" << endl;
-		}
+		if(verbose)
+			cout << "Sorting k-mers ..." << endl;
 
-		//-------------- Check sort order -----------
-		std::ifstream outfile2;
-		outfile2.open(outfile_name);
-		if(outfile2.peek() != EOF){
-			outfile2 >> kmf;
-			if(outfile2.peek()!=EOF){
-				outfile2 >> kmf2;
-				kmer = (((__uint128_t)kmf2)<<64)|((__uint128_t)kmf);
-			}
-		}
+		// kmer_sorter.sort();
+		const stxxl::internal_size_type M = 128 * 1024 * 1024;
+		stxxl::sort(kmers.begin(),kmers.end(), SortKmer(), M);
 
 		if(verbose)
 			cout << "Computing in/out-degrees, edge labels, and weights ..." << endl;
 
 		//previous kmer read from kmers.
-		__uint128_t prev_kmer = kmer;
+		__uint128_t prev_kmer = kmers[0];
 
 		start_positions_out_.push_back(0);
 		out_labels_.push_back(toCHAR(kmers[0] & __uint128_t(7)));
@@ -627,16 +534,11 @@ public:
 		assert(c=='$' or c=='A' or c=='C' or c=='G' or c=='T');
 
 		uint32_t count = 1;
-		bool flag = true;
-		while(flag){
-			if(outfile2.peek() != EOF){
-				outfile2 >> kmf;
-				if(outfile2.peek()!=EOF){
-					outfile2 >> kmf2;
-					kmer = (((__uint128_t)kmf2)<<64)|((__uint128_t)kmf);
-					
+
+		for(uint64_t i = 1; i<kmers.size();++i){
+
 			//if kmer changes
-			if((kmer>>3) != (prev_kmer>>3)){
+			if((kmers[i]>>3) != (prev_kmer>>3)){
 
 				//we set to 0 the counters of kmers that contain $
 				count = has_dollars(prev_kmer)?0:count;
@@ -652,7 +554,7 @@ public:
 				count = 1; //start counting weight of this new kmer
 
 				start_positions_out_.push_back(out_labels_.size());
-				out_labels_.push_back(toCHAR(kmer & __uint128_t(7)));//append to BWT first outgoing edge of this new kmer
+				out_labels_.push_back(toCHAR(kmers[i] & __uint128_t(7)));//append to BWT first outgoing edge of this new kmer
 				char c = out_labels_[out_labels_.size()-1];
 				assert(c=='$' or c=='A' or c=='C' or c=='G' or c=='T');
 
@@ -660,7 +562,7 @@ public:
 
 				count++;
 
-				uint8_t curr_char = kmer & __uint128_t(7);
+				uint8_t curr_char = kmers[i] & __uint128_t(7);
 				uint8_t prev_char = prev_kmer & __uint128_t(7);
 
 				//if char of outgoing edge has changed
@@ -674,16 +576,9 @@ public:
 
 			}
 
-			prev_kmer = kmer;
-			}
-				else{flag = false;}
-				}
-			else{
-				flag = false;
-			}
+			prev_kmer = kmers[i];
 
 		}
-		outfile2.close();
 
 		if(not has_dollars(prev_kmer)){
 			MAX_WEIGHT = count>MAX_WEIGHT?count:MAX_WEIGHT;
@@ -699,62 +594,29 @@ public:
 		OUT_ = vector<uint64_t>(out_labels_.size());
 
 		//delete char labeling outgoing edge from each (k+1)-mer, obtaining the k-mers
-		//and compact kmers by removing duplicates
-		
-		if(verbose)
-			cout << "Resizing k-mers ..." << endl;
+		// for(auto & k : kmers)
+		// 	k = k>>3;
+		// stxxl::for_each(kmers.begin(), kmers.end(), )
 
-		outfile2.open(outfile_name);
-		flag = true;
-		if(outfile2.peek() != EOF){
-				outfile2 >> kmf;
-				if(outfile2.peek()!=EOF){
-					outfile2 >> kmf2;
-					prev_kmer = (((__uint128_t)kmf2)<<64)|((__uint128_t)kmf);
-					}
-				else{flag = false;}
-				}
-			else{
-				flag = false;
+		//if(verbose)
+			//cout << "Resizing k-mers ..." << endl;
+
+		//compact kmers by removing duplicates
+		// auto new_size = distance(kmers.begin(), it);
+		// kmers.resize(new_size);
+		// kmers.shrink_to_fit();
+		vector<__uint128_t> kmers2;
+		prev_kmer = kmers[0]>>3;
+		kmers2.push_back(prev_kmer);
+		for(uint64_t i=1; i< kmers.size();i++){
+			kmers[i] =  kmers[i]>>3;
+			if(prev_kmer != kmers[i]){
+				prev_kmer = kmers[i];
+				kmers2.push_back(kmers[i]);
 			}
-		prev_kmer = prev_kmer>>3;
-		kmers.clear();
-		kmers.push_back(prev_kmer);
-		int new_size = 1;
-		while(flag){
-			if(outfile2.peek() != EOF){
-				outfile2 >> kmf;
-				if(outfile2.peek()!=EOF){
-					outfile2 >> kmf2;
-					kmer = (((__uint128_t)kmf2)<<64)|((__uint128_t)kmf);
-					kmer = kmer>>3;
-					if(prev_kmer != kmer){
-						kmers.push_back(kmer);
-						new_size++;
-						// cout << "kmers " << (uint64_t) kmer <<" "<< (uint64_t) prev_kmer <<" " << new_size<< endl;
-						prev_kmer = kmer;
-					}
-					}
-				else{flag = false;}
-				}
-			else{
-				flag = false;
-			}
-			
 		}
-			// k = k>>3;
-
-		// auto it = unique(kmers.begin(), kmers.end());
-		// auto new_size = distance(kmers.begin(), it);//distance to the end of unique element
-		// cout << "new size "<< new_size <<endl;
-		kmers.resize(new_size);
-		kmers.shrink_to_fit();
-
-		// read to memory and leave the remaining as it is.......
-		
-		if(verbose)
-			cout << "Resized k-mer size ..." << new_size << endl;
-		assert(kmers.size() == nr_of_nodes);
+		kmers.clear();
+		assert(kmers2.size() == nr_of_nodes);
 
 		start_positions_in_ = vector<uint64_t>(nr_of_nodes,0);
 
@@ -772,20 +634,20 @@ public:
 
 				if(c!='$'){
 
-					__uint128_t succ_kmer = (kmers[i]>>3) | (__uint128_t(toINT(c))<<(3*(k-1)));
+					__uint128_t succ_kmer = (kmers2[i]>>3) | (__uint128_t(toINT(c))<<(3*(k-1)));
 
 					//cout << "----" << kmer_to_str_(kmers[i],k) << " " << c << " " << kmer_to_str_(succ_kmer,k)  << endl;
 
-					auto it = lower_bound(kmers.begin(), kmers.end(), succ_kmer);//binary search on the array
+					auto it = lower_bound(kmers2.begin(), kmers2.end(), succ_kmer);
 
-					assert(it != kmers.end());//destination kmer must be present
+					assert(it != kmers2.end());//destination kmer must be present
 
-					uint64_t successor = distance(kmers.begin(), it);
+					uint64_t successor = distance(kmers2.begin(), it);
 
 					//cout << kmer_to_str_(succ_kmer,k) << " " << kmer_to_str_(kmers[successor],k) << endl;
 					//cout << successor << " / " << nr_of_nodes << endl;
 
-					assert( kmers[successor]==succ_kmer );
+					assert( kmers2[successor]==succ_kmer );
 
 					OUT_[start_positions_out_[i]+off] = successor;
 
@@ -801,8 +663,8 @@ public:
 
 		}
 
-		kmers.clear();
-		kmers.shrink_to_fit();
+		kmers2.clear();
+		kmers2.shrink_to_fit();
 
 		assert(start_positions_in_[0]==0);
 
@@ -924,6 +786,20 @@ public:
 
 		if((not do_not_optimize) and XBWT)
 			prune(verbose);
+
+
+		if(D){
+
+			//Count distinct abundances
+			cout << "Counting distinct abundances ..." << endl;
+			vector<uint32_t> W(weights_);
+			sort( W.begin(), W.end() );
+			W.erase( unique( W.begin(), W.end() ), W.end() );
+			cout << "done. " << W.size() << " distinct abundances" << endl;
+
+
+		}
+
 
 		if(verbose)
 			cout << "Computing deltas on the MST edges ... " << endl;
@@ -1236,6 +1112,18 @@ public:
 		assert(sum>=0);
 
 		return sum;
+
+	}
+
+	/*
+	 * input: packed kmer
+	 * output: abundance
+	 */
+	uint64_t abundance(__uint128_t& kmer, int k){
+
+		string km = kmer_to_str_(kmer, k);
+
+		return abundance(km);
 
 	}
 
