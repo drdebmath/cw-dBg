@@ -12,7 +12,9 @@ This library builds a compressed representation of the weighted de Bruijn graph.
 
 To clone the repository, run:
 
-> git clone http://github.com/nicolaprezza/cw-dBg
+> git clone http://github.com/drdebmath/cw-dBg
+> cd cw-dBg
+> git clone https://github.com/stxxl/stxxl.git
 
 ### Compile
 
@@ -29,6 +31,10 @@ run cmake:
 and compile:
 
 > make
+
+To run stxxl, set a system disk with desired file size in a file .stxxl in the build directory
+
+> disk=/var/tmp/stxxl,500GiB,syscall unlink
 
 ### Run
 
