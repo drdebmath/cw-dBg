@@ -23,9 +23,6 @@
 #include <queue>
 #include <stxxl.h>
 #include <stxxl/vector>
-// #include <stxxl/sorter>
-// #include <stxxl/stats>
-// #include <stxxl/timer>
 #include <limits>
 
 using namespace sdsl;
@@ -350,11 +347,13 @@ struct SortKmer
  }
  __uint128_t min_value() const
  {
- return std::numeric_limits<__uint128_t>::min();
+ return 0;
  }
  __uint128_t max_value() const
  {
- return std::numeric_limits<__uint128_t>::max();
+	 __uint128_t a = 0;
+	 a = a-1;
+ return a;
  }
 };
 //has $ symbols in the kmer part?
@@ -468,6 +467,16 @@ public:
 		 *  format example: if k=3 and we have a kmer ACG followed by T, then we store an integer rev(ACG)T = GCAT
 		 *
 		 */
+		// // get uninitialized config singleton
+		// stxxl::config * cfg = stxxl::config::get_instance();
+		// // create a disk_config structure.
+		// stxxl::disk_config disk1("/tmp/stxxl.tmp",0, "syscall unlink");
+		// disk1.direct = stxxl::disk_config::DIRECT_ON; // force O_DIRECT
+		// // add disk to config
+		// cfg->add_disk(disk1);
+		// // add another disk
+		// // cfg->add_disk( disk_config("disk=/tmp/stxxl-2.tmp, 10 GiB, syscall unlink") );
+		// // ... add more disks
 		stxxl::vector<__uint128_t> kmers;
 		kmers.reserve(pre_allocation);
 
@@ -518,7 +527,6 @@ public:
 		if(verbose)
 			cout << "Sorting k-mers ..." << endl;
 
-		// kmer_sorter.sort();
 		const stxxl::internal_size_type M = 128 * 1024 * 1024;
 		stxxl::sort(kmers.begin(),kmers.end(), SortKmer(), M);
 
@@ -594,17 +602,11 @@ public:
 		OUT_ = vector<uint64_t>(out_labels_.size());
 
 		//delete char labeling outgoing edge from each (k+1)-mer, obtaining the k-mers
-		// for(auto & k : kmers)
-		// 	k = k>>3;
-		// stxxl::for_each(kmers.begin(), kmers.end(), )
 
-		//if(verbose)
-			//cout << "Resizing k-mers ..." << endl;
+		if(verbose)
+			cout << "Resizing k-mers ..." << endl;
 
 		//compact kmers by removing duplicates
-		// auto new_size = distance(kmers.begin(), it);
-		// kmers.resize(new_size);
-		// kmers.shrink_to_fit();
 		vector<__uint128_t> kmers2;
 		prev_kmer = kmers[0]>>3;
 		kmers2.push_back(prev_kmer);
@@ -616,6 +618,10 @@ public:
 			}
 		}
 		kmers.clear();
+		if(kmers2.size() != nr_of_nodes){
+			cout << "size of kmers2 " << kmers2.size() <<  " " << nr_of_nodes << endl;
+			exit(0);
+		}
 		assert(kmers2.size() == nr_of_nodes);
 
 		start_positions_in_ = vector<uint64_t>(nr_of_nodes,0);
@@ -652,6 +658,10 @@ public:
 					OUT_[start_positions_out_[i]+off] = successor;
 
 					//count how many edges enter in successor
+					if(successor >= start_positions_in_.size()){
+						cout<<"successor " << successor << " " << start_positions_in_.size() << endl;
+						exit(0);
+					}
 					start_positions_in_[successor]++;
 
 					//if(start_positions_in_[successor]>5)
@@ -2182,6 +2192,7 @@ private:
 			IN_sel = typename bitv_type::select_1_type(&IN);
 
 		}
+		cout << "failed after" << endl;
 
 		//bitv_type OUT;
 		//typename bitv_type::rank_1_type OUT_rank;
