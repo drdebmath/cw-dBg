@@ -2192,7 +2192,6 @@ private:
 			IN_sel = typename bitv_type::select_1_type(&IN);
 
 		}
-		cout << "failed after" << endl;
 
 		//bitv_type OUT;
 		//typename bitv_type::rank_1_type OUT_rank;
