@@ -23,6 +23,7 @@
 #include <queue>
 #include <stxxl.h>
 #include <stxxl/vector>
+#include <stxxl/sorter>
 #include <limits>
 
 using namespace sdsl;
@@ -477,8 +478,11 @@ public:
 		// // add another disk
 		// // cfg->add_disk( disk_config("disk=/tmp/stxxl-2.tmp, 10 GiB, syscall unlink") );
 		// // ... add more disks
-		stxxl::vector<__uint128_t> kmers;
-		kmers.reserve(pre_allocation);
+		// template parameter <ValueType, CompareType, BlockSize, AllocStr(optional)>
+		typedef stxxl::sorter<__uint128_t, SortKmer> kmersorter_type;
+		// create sorter object (CompareType(), MainMemoryLimit)
+		kmersorter_type kmer_sorter(SortKmer(), 1024 * 1024 * 1024);
+		// kmers.reserve(pre_allocation);
 
 		if(verbose)
 			cout << "Extracting k-mers from dataset ..." << endl;
@@ -498,19 +502,19 @@ public:
 			assert(first_char!=0);
 			__uint128_t kmer = first_char;
 
-			kmers.push_back(kmer);
+			kmer_sorter.push(kmer);
 
 			//push the other kmers
 			for(int i=1;i<str.length();++i){
 
 				kmer = edge(kmer, toINT(str[i]),k);
-				kmers.push_back(kmer);
+				kmer_sorter.push(kmer);
 
 			}
 
 			//last kmer: (ACG,$), where ACG was the last kmer in the DNA fragment
 			kmer = edge(kmer, toINT('$'),k);
-			kmers.push_back(kmer);
+			kmer_sorter.push(kmer);
 
 			if(format == fastq){
 				getline(file, str);//getline reads +
@@ -527,26 +531,32 @@ public:
 		if(verbose)
 			cout << "Sorting k-mers ..." << endl;
 
-		const stxxl::internal_size_type M = 128 * 1024 * 1024;
-		stxxl::sort(kmers.begin(),kmers.end(), SortKmer(), M);
+		// const stxxl::internal_size_type M = 128 * 1024 * 1024;
+		// stxxl::sort(kmers.begin(),kmers.end(), SortKmer(), M);
+		kmer_sorter.sort(); //sorts in ascending order
 
 		if(verbose)
 			cout << "Computing in/out-degrees, edge labels, and weights ..." << endl;
 
+		//compact kmers by removing duplicates
+		// vector<__uint128_t> kmers;
+		typedef stxxl::VECTOR_GENERATOR<__uint128_t>::result kmer_type;
+		kmer_type kmers;
 		//previous kmer read from kmers.
-		__uint128_t prev_kmer = kmers[0];
-
+		// __uint128_t prev_kmer = kmers[0];
+		__uint128_t prev_kmer = *kmer_sorter;
+		kmers.push_back(prev_kmer);
 		start_positions_out_.push_back(0);
-		out_labels_.push_back(toCHAR(kmers[0] & __uint128_t(7)));
+		out_labels_.push_back(toCHAR(prev_kmer & __uint128_t(7)));
 		char c = out_labels_[out_labels_.size()-1];
 		assert(c=='$' or c=='A' or c=='C' or c=='G' or c=='T');
 
 		uint32_t count = 1;
-
-		for(uint64_t i = 1; i<kmers.size();++i){
-
+		++kmer_sorter;
+		while(!kmer_sorter.empty()){
+			__uint128_t kmer = *kmer_sorter;
 			//if kmer changes
-			if((kmers[i]>>3) != (prev_kmer>>3)){
+			if((kmer>>3) != (prev_kmer>>3)){
 
 				//we set to 0 the counters of kmers that contain $
 				count = has_dollars(prev_kmer)?0:count;
@@ -562,15 +572,15 @@ public:
 				count = 1; //start counting weight of this new kmer
 
 				start_positions_out_.push_back(out_labels_.size());
-				out_labels_.push_back(toCHAR(kmers[i] & __uint128_t(7)));//append to BWT first outgoing edge of this new kmer
+				out_labels_.push_back(toCHAR(kmer & __uint128_t(7)));//append to BWT first outgoing edge of this new kmer
 				char c = out_labels_[out_labels_.size()-1];
 				assert(c=='$' or c=='A' or c=='C' or c=='G' or c=='T');
-
+				kmers.push_back((kmer>>3));
 			}else{//same kmer
 
 				count++;
 
-				uint8_t curr_char = kmers[i] & __uint128_t(7);
+				uint8_t curr_char = kmer & __uint128_t(7);
 				uint8_t prev_char = prev_kmer & __uint128_t(7);
 
 				//if char of outgoing edge has changed
@@ -584,7 +594,8 @@ public:
 
 			}
 
-			prev_kmer = kmers[i];
+			prev_kmer = kmer;
+			++kmer_sorter;
 
 		}
 
@@ -604,25 +615,19 @@ public:
 		//delete char labeling outgoing edge from each (k+1)-mer, obtaining the k-mers
 
 		if(verbose)
-			cout << "Resizing k-mers ..." << endl;
+			cout << "Found unique k-mers ..." << kmers.size() << endl;
 
-		//compact kmers by removing duplicates
-		vector<__uint128_t> kmers2;
-		prev_kmer = kmers[0]>>3;
-		kmers2.push_back(prev_kmer);
-		for(uint64_t i=1; i< kmers.size();i++){
-			kmers[i] =  kmers[i]>>3;
-			if(prev_kmer != kmers[i]){
-				prev_kmer = kmers[i];
-				kmers2.push_back(kmers[i]);
-			}
-		}
-		kmers.clear();
-		if(kmers2.size() != nr_of_nodes){
-			cout << "size of kmers2 " << kmers2.size() <<  " " << nr_of_nodes << endl;
-			exit(0);
-		}
-		assert(kmers2.size() == nr_of_nodes);
+		// prev_kmer = kmers[0]>>3;
+		// kmers2.push_back(prev_kmer);
+		// for(uint64_t i=1; i< kmers.size();i++){
+		// 	kmers[i] =  kmers[i]>>3;
+		// 	if(prev_kmer != kmers[i]){
+		// 		prev_kmer = kmers[i];
+		// 		kmers2.push_back(kmers[i]);
+		// 	}
+		// }
+		// kmers.clear();
+		assert(kmers.size() == nr_of_nodes);
 
 		start_positions_in_ = vector<uint64_t>(nr_of_nodes,0);
 
@@ -640,20 +645,39 @@ public:
 
 				if(c!='$'){
 
-					__uint128_t succ_kmer = (kmers2[i]>>3) | (__uint128_t(toINT(c))<<(3*(k-1)));
+					__uint128_t succ_kmer = (kmers[i]>>3) | (__uint128_t(toINT(c))<<(3*(k-1)));
 
 					//cout << "----" << kmer_to_str_(kmers[i],k) << " " << c << " " << kmer_to_str_(succ_kmer,k)  << endl;
 
-					auto it = lower_bound(kmers2.begin(), kmers2.end(), succ_kmer);
+					// kmer_type::iterator it = lower_bound(kmers.begin(), kmers.end(), succ_kmer);
+					uint64_t successor = kmers.size()>>1;
+					uint64_t first = 0;
+					uint64_t last = kmers.size();
+					while(kmers[successor] != succ_kmer){
+						if(kmers[successor] > succ_kmer){
+							last = successor;
+						}
+						else{
+							first = successor;
+						}
+						successor = (first + last)/2;
+						if(first == last){
+							cout << "k-mer not found ..." << endl;
+							exit(0);
+						}
+					}
+					while(kmers[successor] == succ_kmer){
+						--successor;
+					}
+					++successor;
+					assert(successor!= kmers.size());//destination kmer must be present
 
-					assert(it != kmers2.end());//destination kmer must be present
+					// uint64_t successor = distance(kmers.begin(), it);
 
-					uint64_t successor = distance(kmers2.begin(), it);
-
-					//cout << kmer_to_str_(succ_kmer,k) << " " << kmer_to_str_(kmers[successor],k) << endl;
+					// cout << kmer_to_str_(succ_kmer,k) << " " << kmer_to_str_(kmers[successor],k) << endl;
 					//cout << successor << " / " << nr_of_nodes << endl;
 
-					assert( kmers2[successor]==succ_kmer );
+					// assert( kmers[successor]==succ_kmer );
 
 					OUT_[start_positions_out_[i]+off] = successor;
 
@@ -673,8 +697,8 @@ public:
 
 		}
 
-		kmers2.clear();
-		kmers2.shrink_to_fit();
+		kmers.clear();
+		// kmers.shrink_to_fit();
 
 		assert(start_positions_in_[0]==0);
 
@@ -2192,7 +2216,6 @@ private:
 			IN_sel = typename bitv_type::select_1_type(&IN);
 
 		}
-		cout << "failed after" << endl;
 
 		//bitv_type OUT;
 		//typename bitv_type::rank_1_type OUT_rank;
