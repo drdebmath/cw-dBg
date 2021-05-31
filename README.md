@@ -2,9 +2,11 @@
 
 Author: Nicola Prezza. Joint work with Giuseppe Italiano, Blerina Sinaimeri, Rossano Venturini
 
+_Modified by Debasish Pattanayak to add external sorting_
+
 ### Description
 
-**Warning: experimental code. dBg construction uses external sorting and requires 22 Bytes per input base (on Disk) at the moment and needs 5 Bytes per input base (on RAM).**
+**Warning: experimental code. dBg construction uses external sorting. See [results.md](https://github.com/drdebmath/cw-dBg/blob/main/results.md) for estimated RAM usage.**
 
 This library builds a compressed representation of the weighted de Bruijn graph. The underlying graph topology is stored using the BOSS representation, while the weights are differentially encoded and sampled on a spanning tree of the graph chosen to minimize the total bit-size of the structure. Results show that on a 20x-covered dataset with 27M distinct kmers (700Mbases in total), the whole structure takes 5.44 bits per kmer (just 18 MB in total).
 
