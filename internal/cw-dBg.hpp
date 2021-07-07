@@ -341,22 +341,53 @@ string kmer_to_str(__uint128_t kmer, int k){
 
 struct SortKmer
 {
- // comparison function
- bool operator () (const __uint128_t& a, const __uint128_t& b) const
- {
- return a< b;
- }
- __uint128_t min_value() const
- {
- return 0;
- }
- __uint128_t max_value() const
- {
-	 __uint128_t a = 0;
-	 a = a-1;
- return a;
- }
+	// comparison function
+	bool operator () (const __uint128_t& a, const __uint128_t& b) const
+	{
+		return a< b;
+	}
+	__uint128_t min_value() const
+	{
+	return 0;
+	}
+	__uint128_t max_value() const
+	{
+		__uint128_t a = 0;
+		a = a-1;
+	return a;
+	}
 };
+
+struct KmerMap
+{
+	__uint128_t kmer;
+	__uint64_t position;
+	bool triple;
+	KmerMap()
+	{ }
+	KmerMap(__uint128_t _kmer, __uint64_t _pos, bool _triple)
+	: kmer(_kmer), position(_pos), triple(_triple)
+	{ }
+};
+
+struct KmerComparator
+{
+	bool operator () (const KmerMap& a, const KmerMap& b) const
+	{
+		return a.kmer < b.kmer;
+	}
+	KmerMap min_value() const
+	{
+	return KmerMap(0, 0, false);
+	}
+	KmerMap max_value() const
+	{
+		__uint128_t a = 0;
+		a = a-1;
+	return KmerMap(a, std::numeric_limits<__uint64_t>::max(), true);
+	}
+};
+
 //has $ symbols in the kmer part?
 bool has_dollars(__uint128_t kmer){
 
@@ -505,7 +536,7 @@ public:
 			kmer_sorter.push(kmer);
 
 			//push the other kmers
-			for(int i=1;i<str.length();++i){
+			for(uint64_t i=1;i<str.length();++i){
 
 				kmer = edge(kmer, toINT(str[i]),k);
 				kmer_sorter.push(kmer);
@@ -539,13 +570,17 @@ public:
 			cout << "Computing in/out-degrees, edge labels, and weights ..." << endl;
 
 		//compact kmers by removing duplicates
-		// vector<__uint128_t> kmers;
-		typedef stxxl::VECTOR_GENERATOR<__uint128_t>::result kmer_type;
-		kmer_type kmers;
+		// vector<__uint128_t> kmers2;
+		typedef stxxl::VECTOR_GENERATOR<KmerMap>::result kmer_map_type;
+		kmer_map_type kmers;
 		//previous kmer read from kmers.
 		// __uint128_t prev_kmer = kmers[0];
 		__uint128_t prev_kmer = *kmer_sorter;
-		kmers.push_back(prev_kmer);
+		__uint64_t index = 0;
+		// kmers2.push_back((prev_kmer>>3));
+		kmers.push_back(KmerMap((prev_kmer), index, false));
+		kmers.push_back(KmerMap((edge(prev_kmer, 0, k)), index, true));
+		++index;
 		start_positions_out_.push_back(0);
 		out_labels_.push_back(toCHAR(prev_kmer & __uint128_t(7)));
 		char c = out_labels_[out_labels_.size()-1];
@@ -575,7 +610,10 @@ public:
 				out_labels_.push_back(toCHAR(kmer & __uint128_t(7)));//append to BWT first outgoing edge of this new kmer
 				char c = out_labels_[out_labels_.size()-1];
 				assert(c=='$' or c=='A' or c=='C' or c=='G' or c=='T');
-				kmers.push_back((kmer>>3));
+				// kmers2.push_back((kmer>>3));
+				kmers.push_back(KmerMap(kmer, index, false));
+				kmers.push_back(KmerMap(edge(kmer, 0, k), index, true));
+				++index;
 			}else{//same kmer
 
 				count++;
@@ -589,7 +627,7 @@ public:
 					out_labels_.push_back(toCHAR(curr_char));
 					char c = out_labels_[out_labels_.size()-1];
 					assert(c=='$' or c=='A' or c=='C' or c=='G' or c=='T');
-
+					kmers.push_back(KmerMap(edge(kmer, 0, k), index -1, true));
 				}
 
 			}
@@ -611,100 +649,120 @@ public:
 		nr_of_nodes = start_positions_out_.size();
 
 		OUT_ = vector<uint64_t>(out_labels_.size());
+		// O2UT_ = vector<uint64_t>(out_labels_.size());
 
 		//delete char labeling outgoing edge from each (k+1)-mer, obtaining the k-mers
 
-		if(verbose)
-			cout << "Found unique k-mers ..." << kmers.size() << endl;
+		if(verbose){
+			cout << "Found unique k+1-mers ..." << kmers.size() << endl;
+			cout << "Found unique k-mers ..." << index <<" " << nr_of_nodes << endl;
+		}
+		assert(index == nr_of_nodes);
 
-		// prev_kmer = kmers[0]>>3;
-		// kmers2.push_back(prev_kmer);
-		// for(uint64_t i=1; i< kmers.size();i++){
-		// 	kmers[i] =  kmers[i]>>3;
-		// 	if(prev_kmer != kmers[i]){
-		// 		prev_kmer = kmers[i];
-		// 		kmers2.push_back(kmers[i]);
-		// 	}
+		if(verbose)
+			cout << "sorting k+1-mers in order ..." << kmers.size() << endl;
+		stxxl::sort(kmers.begin(), kmers.end(), KmerComparator(), 1024*1024*1024);
+		if(verbose)
+			cout << "Finished sorting kmers ..." << endl;
+		// for(uint64_t i = 0;i < kmers.size();i++){
+		// 	cout << kmer_to_str(kmers[i].kmer, k) <<" "<< kmers[i].position << " " << kmers[i].triple<< endl;
 		// }
-		// kmers.clear();
-		assert(kmers.size() == nr_of_nodes);
 
 		start_positions_in_ = vector<uint64_t>(nr_of_nodes,0);
-
-		for(uint64_t i=0;i<nr_of_nodes;++i){
-
-			uint64_t out_deg = out_degree_(i);
-
-			for(uint8_t off=0;off<out_deg;++off){
-
-				//outgoing label
-				assert(start_positions_out_[i]+off<out_labels_.size());
-				char c = out_labels_[start_positions_out_[i]+off];
-
-				assert(c=='$' or c=='A' or c=='C' or c=='G' or c=='T');
-
-				if(c!='$'){
-
-					__uint128_t succ_kmer = (kmers[i]>>3) | (__uint128_t(toINT(c))<<(3*(k-1)));
-
-					//cout << "----" << kmer_to_str_(kmers[i],k) << " " << c << " " << kmer_to_str_(succ_kmer,k)  << endl;
-
-					// kmer_type::iterator it = lower_bound(kmers.begin(), kmers.end(), succ_kmer);
-					uint64_t successor = kmers.size()>>1;
-					uint64_t first = 0;
-					uint64_t last = kmers.size();
-					while(kmers[successor] != succ_kmer){
-						if(kmers[successor] > succ_kmer){
-							last = successor;
+		// s2tart_positions_in_ = vector<uint64_t>(nr_of_nodes,0);
+		uint64_t predecessor = 0;
+		uint64_t successor = 0;
+		uint64_t start = 0;
+		for(uint64_t j=0; j < kmers.size();j++){
+			if(kmers[j].triple == true){
+				predecessor = kmers[j].position;
+				if(j > 6){start = j-6;}
+				for(uint64_t i =start; i < j+6;i++){
+					if (kmers[i].triple == false && (kmers[i].kmer>>3) == (kmers[j].kmer>>3)){
+						char c = toCHAR(uint8_t(kmers[j].kmer >> 3*k));
+						successor = kmers[i].position;
+						// cout << predecessor << " " << successor << " "<<kmer_to_str(kmers[j].kmer, k) << " " << kmer_to_str(kmers[i].kmer, k) <<" " <<c <<" " << endl;
+						for(uint8_t off =0;off<out_degree_(predecessor);off++){
+							if(out_labels_[start_positions_out_[predecessor]+off] == c && c != '$'){
+								OUT_[start_positions_out_[predecessor]+off] = successor;
+								start_positions_in_[successor]++;
+							}
+							// cout << out_labels_[start_positions_out_[predecessor]+off] << " " ;
 						}
-						else{
-							first = successor;
-						}
-						successor = (first + last)/2;
-						if(first == last){
-							cout << "k-mer not found ..." << endl;
-							exit(0);
-						}
+						// cout << endl;
+						break;
 					}
-					while(kmers[successor] == succ_kmer){
-						--successor;
-					}
-					++successor;
-					assert(successor!= kmers.size());//destination kmer must be present
-
-					// uint64_t successor = distance(kmers.begin(), it);
-
-					// cout << kmer_to_str_(succ_kmer,k) << " " << kmer_to_str_(kmers[successor],k) << endl;
-					//cout << successor << " / " << nr_of_nodes << endl;
-
-					// assert( kmers[successor]==succ_kmer );
-
-					OUT_[start_positions_out_[i]+off] = successor;
-
-					//count how many edges enter in successor
-					if(successor >= start_positions_in_.size()){
-						cout<<"successor " << successor << " " << start_positions_in_.size() << endl;
-						exit(0);
-					}
-					start_positions_in_[successor]++;
-
-					//if(start_positions_in_[successor]>5)
-						//cout << "hmmmm: " << kmer_to_str_(succ_kmer,k) << endl;
-
 				}
-
 			}
-
 		}
 
+		// for(uint64_t i=0;i<nr_of_nodes;++i){
+
+		// 	uint64_t out_deg = out_degree_(i);
+
+		// 	for(uint8_t off=0;off<out_deg;++off){
+
+		// 		//outgoing label
+		// 		assert(start_positions_out_[i]+off<out_labels_.size());
+		// 		char c = out_labels_[start_positions_out_[i]+off];
+
+		// 		assert(c=='$' or c=='A' or c=='C' or c=='G' or c=='T');
+
+		// 		if(c!='$'){
+
+		// 			__uint128_t succ_kmer = (kmers2[i]>>3) | (__uint128_t(toINT(c))<<(3*(k-1)));
+		// 			auto it = lower_bound(kmers2.begin(), kmers2.end(), succ_kmer);
+		// 			assert(it != kmers2.end());//destination kmer must be present
+
+		// 			uint64_t successor = distance(kmers2.begin(), it);
+
+		// 			// cout << kmer_to_str_(succ_kmer,k) << " " << kmer_to_str_(kmers[successor],k) << endl;
+		// 			//cout << successor << " / " << nr_of_nodes << endl;
+
+		// 			assert( kmers2[successor]==succ_kmer );
+		// 			assert(successor!= kmers2.size());//destination kmer must be present
+		// 			// validate the successor in kmers
+					
+		// 			// assert( kmers[i+1].kmer==succ_kmer ); 
+		// 			O2UT_[start_positions_out_[i]+off] = successor;
+
+		// 			//count how many edges enter in successor
+		// 			if(successor >= s2tart_positions_in_.size()){
+		// 				cout<<"successor " << successor << " " << start_positions_in_.size() << endl;
+		// 				exit(0);
+		// 			}
+		// 			s2tart_positions_in_[successor]++;
+
+		// 			//if(start_positions_in_[successor]>5)
+		// 				//cout << "hmmmm: " << kmer_to_str_(succ_kmer,k) << endl;
+
+		// 		}
+
+		// 	}
+
+		// }
+
 		kmers.clear();
+		// kmers2.clear();
 		// kmers.shrink_to_fit();
 
 		assert(start_positions_in_[0]==0);
 
 		//add one incoming edge (the only one labeled $) to the source
 		start_positions_in_[0]=1;
-
+		// s2tart_positions_in_[0]=1;
+		// cout << "Checking start positions in "<<endl;
+		// for(uint64_t i=0;i<start_positions_in_.size();i++){
+		// 	if(start_positions_in_[i] != s2tart_positions_in_[i]){
+		// 		cout<<i<<" "<<start_positions_in_[i] <<" "<<s2tart_positions_in_[i] << " "<< kmer_to_str(kmers2[i],k)<<endl;
+		// 	}
+		// }
+		// cout << "Checking OUT "<<endl;
+		// for(uint64_t i=0;i<OUT_.size();i++){
+		// 	if(OUT_[i] != O2UT_[i]){
+		// 		cout<<i<<" "<<OUT_[i] <<" "<<O2UT_[i] <<" "<< kmer_to_str(kmers2[O2UT_[i]],k)<<endl;
+		// 	}
+		// }
 		for(auto x : start_positions_in_){
 			assert(x>0); //every node must have >0 and <=5 incoming edges
 			assert(x<=5);
@@ -785,7 +843,7 @@ public:
 			}
 
 		}
-
+		
 		assert(start_positions_in_[nr_of_nodes-1] == IN_.size());
 
 		//right-shift start_positions_in_
@@ -2366,9 +2424,11 @@ private:
 	//labels of outgoing edges. Corresponds to the BWT, except that there can be unnecessary $ here (will be removed in BWT)
 	string out_labels_;
 	vector<uint64_t> OUT_; //outgoing edges
+	// vector<uint64_t> O2UT_; //outgoing edges
 	vector<uint64_t> IN_; //incoming edges
 
 	vector<uint64_t> start_positions_in_; //for each node, its starting position in IN_
+	// vector<uint64_t> s2tart_positions_in_; //for each node, its starting position in IN_
 	vector<uint64_t> start_positions_out_; //for each node, its starting position in OUT_ and out_labels_
 
 	vector<uint32_t> weights_; //one weight per node

@@ -168,7 +168,7 @@ int main(int argc, char** argv){
 	cout << "Max abundance " << cwdbg.max_weight() << endl;
 	cout << "Mean abundance " << cwdbg.mean_weight() << endl;
 
-	string out_index = input_file + ".cwdbg";
+	string out_index = input_file + to_string(nlines) + to_string(k) + ".ex.cwdbg";
 
 	cout << "Storing data structure to " << out_index << endl;
 	cwdbg.save_to_file(out_index);
